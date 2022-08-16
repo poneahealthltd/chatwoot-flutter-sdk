@@ -35,6 +35,10 @@ class ChatwootChat extends StatefulWidget {
   /// Custom user details to be attached to chatwoot contact
   final ChatwootUser? user;
 
+  final ChatwootClient? chatwootClient;
+
+  final ChatwootCallbacks? chatwootCallbacks;
+
   /// See [ChatList.onEndReached]
   final Future<void> Function()? onEndReached;
 
@@ -148,7 +152,9 @@ class ChatwootChat extends StatefulWidget {
       this.onConversationIsOnline,
       this.onConversationIsOffline,
       this.onError,
-      this.isPresentedInDialog = false})
+      this.isPresentedInDialog = false,
+      this.chatwootClient,
+      this.chatwootCallbacks})
       : super(key: key);
 
   @override
@@ -163,9 +169,9 @@ class _ChatwootChatState extends State<ChatwootChat> {
 
   final idGen = Uuid();
   late final _user;
-  ChatwootClient? chatwootClient;
+  ChatwootClient? _chatwootClient;
 
-  late final chatwootCallbacks;
+  ChatwootCallbacks? _chatwootCallbacks;
 
   @override
   void initState() {
@@ -180,111 +186,119 @@ class _ChatwootChatState extends State<ChatwootChat> {
         imageUrl: widget.user?.avatarUrl,
       );
     }
-
-    chatwootCallbacks = ChatwootCallbacks(
-      onWelcome: () {
-        widget.onWelcome?.call();
-      },
-      onPing: () {
-        widget.onPing?.call();
-      },
-      onConfirmedSubscription: () {
-        widget.onConfirmedSubscription?.call();
-      },
-      onConversationStartedTyping: () {
-        widget.onConversationStoppedTyping?.call();
-      },
-      onConversationStoppedTyping: () {
-        widget.onConversationStartedTyping?.call();
-      },
-      onPersistedMessagesRetrieved: (persistedMessages) {
-        if (widget.enablePersistence) {
+    if(widget.chatwootCallbacks == null) {
+      _chatwootCallbacks = ChatwootCallbacks(
+        onWelcome: () {
+          widget.onWelcome?.call();
+        },
+        onPing: () {
+          widget.onPing?.call();
+        },
+        onConfirmedSubscription: () {
+          widget.onConfirmedSubscription?.call();
+        },
+        onConversationStartedTyping: () {
+          widget.onConversationStoppedTyping?.call();
+        },
+        onConversationStoppedTyping: () {
+          widget.onConversationStartedTyping?.call();
+        },
+        onPersistedMessagesRetrieved: (persistedMessages) {
+          if (widget.enablePersistence) {
+            setState(() {
+              _messages = persistedMessages
+                  .map((message) => _chatwootMessageToTextMessage(message))
+                  .toList();
+            });
+          }
+          widget.onPersistedMessagesRetrieved?.call(persistedMessages);
+        },
+        onMessagesRetrieved: (messages) {
+          if (messages.isEmpty) {
+            return;
+          }
           setState(() {
-            _messages = persistedMessages
+            final chatMessages = messages
                 .map((message) => _chatwootMessageToTextMessage(message))
                 .toList();
+            final mergedMessages =
+            <types.Message>[..._messages, ...chatMessages].toSet().toList();
+            final now = DateTime.now().millisecondsSinceEpoch;
+            mergedMessages.sort((a, b) {
+              return (b.createdAt ?? now).compareTo(a.createdAt ?? now);
+            });
+            _messages = mergedMessages;
           });
-        }
-        widget.onPersistedMessagesRetrieved?.call(persistedMessages);
-      },
-      onMessagesRetrieved: (messages) {
-        if (messages.isEmpty) {
-          return;
-        }
-        setState(() {
-          final chatMessages = messages
-              .map((message) => _chatwootMessageToTextMessage(message))
-              .toList();
-          final mergedMessages =
-              <types.Message>[..._messages, ...chatMessages].toSet().toList();
-          final now = DateTime.now().millisecondsSinceEpoch;
-          mergedMessages.sort((a, b) {
-            return (b.createdAt ?? now).compareTo(a.createdAt ?? now);
-          });
-          _messages = mergedMessages;
-        });
-        widget.onMessagesRetrieved?.call(messages);
-      },
-      onMessageReceived: (chatwootMessage) {
-        _addMessage(_chatwootMessageToTextMessage(chatwootMessage));
-        widget.onMessageReceived?.call(chatwootMessage);
-      },
-      onMessageDelivered: (chatwootMessage, echoId) {
-        _handleMessageSent(
-            _chatwootMessageToTextMessage(chatwootMessage, echoId: echoId));
-        widget.onMessageDelivered?.call(chatwootMessage);
-      },
-      onMessageUpdated: (chatwootMessage) {
-        _handleMessageUpdated(_chatwootMessageToTextMessage(chatwootMessage,
-            echoId: chatwootMessage.id.toString()));
-        widget.onMessageUpdated?.call(chatwootMessage);
-      },
-      onMessageSent: (chatwootMessage, echoId) {
-        final textMessage = types.TextMessage(
-            id: echoId,
-            author: _user,
-            text: chatwootMessage.content ?? "",
-            status: types.Status.delivered);
-        _handleMessageSent(textMessage);
-        widget.onMessageSent?.call(chatwootMessage);
-      },
-      onConversationResolved: () {
-        final resolvedMessage = types.TextMessage(
-            id: idGen.v4(),
-            text: widget.l10n.conversationResolvedMessage,
-            author: types.User(
-                id: idGen.v4(),
-                firstName: "Bot",
-                imageUrl:
-                    "https://d2cbg94ubxgsnp.cloudfront.net/Pictures/480x270//9/9/3/512993_shutterstock_715962319converted_920340.png"),
-            status: types.Status.delivered);
-        _addMessage(resolvedMessage);
-      },
-      onError: (error) {
-        if (error.type == ChatwootClientExceptionType.SEND_MESSAGE_FAILED) {
-          _handleSendMessageFailed(error.data);
-        }
-        print("Ooops! Something went wrong. Error Cause: ${error.cause}");
-        widget.onError?.call(error);
-      },
-    );
+          widget.onMessagesRetrieved?.call(messages);
+        },
+        onMessageReceived: (chatwootMessage) {
+          _addMessage(_chatwootMessageToTextMessage(chatwootMessage));
+          widget.onMessageReceived?.call(chatwootMessage);
+        },
+        onMessageDelivered: (chatwootMessage, echoId) {
+          _handleMessageSent(
+              _chatwootMessageToTextMessage(chatwootMessage, echoId: echoId));
+          widget.onMessageDelivered?.call(chatwootMessage);
+        },
+        onMessageUpdated: (chatwootMessage) {
+          _handleMessageUpdated(_chatwootMessageToTextMessage(chatwootMessage,
+              echoId: chatwootMessage.id.toString()));
+          widget.onMessageUpdated?.call(chatwootMessage);
+        },
+        onMessageSent: (chatwootMessage, echoId) {
+          final textMessage = types.TextMessage(
+              id: echoId,
+              author: _user,
+              text: chatwootMessage.content ?? "",
+              status: types.Status.delivered);
+          _handleMessageSent(textMessage);
+          widget.onMessageSent?.call(chatwootMessage);
+        },
+        onConversationResolved: () {
+          final resolvedMessage = types.TextMessage(
+              id: idGen.v4(),
+              text: widget.l10n.conversationResolvedMessage,
+              author: types.User(
+                  id: idGen.v4(),
+                  firstName: "Bot",
+                  imageUrl:
+                  "https://d2cbg94ubxgsnp.cloudfront.net/Pictures/480x270//9/9/3/512993_shutterstock_715962319converted_920340.png"),
+              status: types.Status.delivered);
+          _addMessage(resolvedMessage);
+        },
+        onError: (error) {
+          if (error.type == ChatwootClientExceptionType.SEND_MESSAGE_FAILED) {
+            _handleSendMessageFailed(error.data);
+          }
+          print("Ooops! Something went wrong. Error Cause: ${error.cause}");
+          widget.onError?.call(error);
+        },
+      );
+    } else {
+      _chatwootCallbacks = widget.chatwootCallbacks;
+    }
 
-    ChatwootClient.create(
-            baseUrl: widget.baseUrl,
-            inboxIdentifier: widget.inboxIdentifier,
-            user: widget.user,
-            enablePersistence: widget.enablePersistence,
-            callbacks: chatwootCallbacks)
-        .then((client) {
-      setState(() {
-        chatwootClient = client;
-        chatwootClient!.loadMessages();
+    if(widget.chatwootClient == null) {
+      ChatwootClient.create(
+          baseUrl: widget.baseUrl,
+          inboxIdentifier: widget.inboxIdentifier,
+          user: widget.user,
+          enablePersistence: widget.enablePersistence,
+          callbacks: _chatwootCallbacks)
+          .then((client) {
+        setState(() {
+          _chatwootClient = client;
+          _chatwootClient!.loadMessages();
+        });
+      }).onError((error, stackTrace) {
+        widget.onError?.call(ChatwootClientException(
+            error.toString(), ChatwootClientExceptionType.CREATE_CLIENT_FAILED));
+        print("chatwoot client failed with error $error: $stackTrace");
       });
-    }).onError((error, stackTrace) {
-      widget.onError?.call(ChatwootClientException(
-          error.toString(), ChatwootClientExceptionType.CREATE_CLIENT_FAILED));
-      print("chatwoot client failed with error $error: $stackTrace");
-    });
+    } else {
+      _chatwootClient = widget.chatwootClient;
+      _chatwootClient!.loadMessages();
+    }
   }
 
   types.TextMessage _chatwootMessageToTextMessage(ChatwootMessage message,
@@ -324,7 +338,7 @@ class _ChatwootChatState extends State<ChatwootChat> {
   }
 
   void _handleResendMessage(types.TextMessage message) async {
-    chatwootClient!.sendMessage(content: message.text, echoId: message.id);
+    _chatwootClient!.sendMessage(content: message.text, echoId: message.id);
     final index = _messages.indexWhere((element) => element.id == message.id);
     setState(() {
       _messages[index] = message.copyWith(status: types.Status.sending);
@@ -390,8 +404,7 @@ class _ChatwootChatState extends State<ChatwootChat> {
 
     _addMessage(textMessage);
 
-    chatwootClient!
-        .sendMessage(content: textMessage.text, echoId: textMessage.id);
+    _chatwootClient!.sendMessage(content: textMessage.text, echoId: textMessage.id);
     widget.onSendPressed?.call(message);
   }
 
@@ -455,6 +468,6 @@ class _ChatwootChatState extends State<ChatwootChat> {
   @override
   void dispose() {
     super.dispose();
-    chatwootClient?.dispose();
+    //_chatwootClient?.dispose();
   }
 }
